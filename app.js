@@ -1,60 +1,45 @@
-// 1. AUTO-CONFIG: Detects if your site is HTTPS or HTTP
-const isSecure = window.location.protocol === "https:";
+// CONFIGURATION - Specifically tuned for GitHub Pages (HTTPS)
 const BROKER = "broker.hivemq.com";
-// HiveMQ uses 8000 for WS and 8884 or 443 for WSS
-const PORT = isSecure ? 8884 : 8000; 
+const PORT = 8884; // The SECURE port
+const ROOM_TOPIC = "gemini/chat/unique_v5_final"; 
 
-const ROOM_TOPIC = "gemini/chat/unique_v3_room"; // Change this if you want a private room
-const STATUS_TOPIC = "gemini/chat/status/";
+// 1. GENERATE UNIQUE IDENTITY
+// We use a random suffix so that opening two tabs doesn't cause a conflict.
+const username = prompt("Enter your chat name:") || "User" + Math.floor(Math.random() * 100);
+const uniqueID = "client_" + Math.random().toString(16).slice(2, 10);
 
-// 2. IDENTITY: Force a truly unique ID so tabs don't kick each other off
-const username = prompt("What is your name?") || "User_" + Math.floor(Math.random() * 100);
-const uniqueID = "client_" + Math.random().toString(16).substr(2, 8);
-
+// Initialize the Paho MQTT Client
 const client = new Paho.MQTT.Client(BROKER, PORT, uniqueID);
 
-// 3. CONNECTION LOGIC
+// 2. CONNECTION OPTIONS
 const connectOptions = {
+    useSSL: true,          // REQUIRED for GitHub Pages
+    timeout: 3,
     onSuccess: onConnect,
     onFailure: (err) => {
-        console.error("CONNECTION FAILED:", err);
-        alert("Connection failed! Check console (F12) for details.");
-    },
-    useSSL: isSecure, // Matches the protocol of your website
-    keepAliveInterval: 30,
-    timeout: 10,
-    cleanSession: true
+        console.error("FAILED TO CONNECT:", err);
+        alert("Connection failed. Check the console for details.");
+    }
 };
 
+// 3. SET HANDLERS
 client.onConnectionLost = (res) => {
-    console.log("Connection Lost: " + res.errorMessage);
+    console.log("Connection lost: " + res.errorMessage);
 };
 
 client.onMessageArrived = (message) => {
     const chat = document.getElementById('chat');
     try {
         const data = JSON.parse(message.payloadString);
-        const isMe = data.user === username;
-        
-        const msgDiv = document.createElement('div');
-        msgDiv.style.padding = "10px";
-        msgDiv.style.margin = "5px";
-        msgDiv.style.borderRadius = "8px";
-        msgDiv.style.maxWidth = "70%";
-        msgDiv.style.alignSelf = isMe ? "flex-end" : "flex-start";
-        msgDiv.style.backgroundColor = isMe ? "#007bff" : "#e9e9eb";
-        msgDiv.style.color = isMe ? "white" : "black";
-        
-        msgDiv.innerHTML = `<strong>${data.user}</strong>: ${data.text}`;
-        chat.appendChild(msgDiv);
-        chat.scrollTop = chat.scrollHeight;
+        renderMessage(data);
     } catch (e) {
-        console.log("Received non-JSON message: ", message.payloadString);
+        console.log("Non-JSON message received:", message.payloadString);
     }
 };
 
+// 4. FUNCTIONS
 function onConnect() {
-    console.log("CONNECTED TO BROKER ON PORT: " + PORT);
+    console.log("Connected Successfully over WSS!");
     client.subscribe(ROOM_TOPIC);
 }
 
@@ -64,7 +49,8 @@ function sendMessage() {
 
     const payload = JSON.stringify({
         user: username,
-        text: input.value
+        text: input.value,
+        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     });
 
     const message = new Paho.MQTT.Message(payload);
@@ -73,6 +59,27 @@ function sendMessage() {
     input.value = '';
 }
 
-// Start the connection
-console.log(`Attempting to connect to ${BROKER} on port ${PORT}...`);
+function renderMessage(data) {
+    const chat = document.getElementById('chat');
+    const msgDiv = document.createElement('div');
+    const isMe = data.user === username;
+    
+    // Inline styling for quick testing
+    msgDiv.style.cssText = `
+        padding: 8px 12px;
+        margin: 5px;
+        border-radius: 10px;
+        max-width: 70%;
+        font-family: sans-serif;
+        background: ${isMe ? '#007bff' : '#e9e9eb'};
+        color: ${isMe ? 'white' : 'black'};
+        align-self: ${isMe ? 'flex-end' : 'flex-start'};
+    `;
+    
+    msgDiv.innerHTML = `<strong>${data.user}</strong>: ${data.text}`;
+    chat.appendChild(msgDiv);
+    chat.scrollTop = chat.scrollHeight;
+}
+
+// 5. START CONNECTION
 client.connect(connectOptions);
