@@ -1,85 +1,87 @@
-// CONFIGURATION - Specifically tuned for GitHub Pages (HTTPS)
 const BROKER = "broker.hivemq.com";
-const PORT = 8884; // The SECURE port
-const ROOM_TOPIC = "gemini/chat/unique_v5_final"; 
+const PORT = 8884; 
+const ROOM_TOPIC = "gemini/chat/v6/main";
+const STATUS_TOPIC = "gemini/chat/v6/status/";
 
-// 1. GENERATE UNIQUE IDENTITY
-// We use a random suffix so that opening two tabs doesn't cause a conflict.
-const username = prompt("Enter your chat name:") || "User" + Math.floor(Math.random() * 100);
-const uniqueID = "client_" + Math.random().toString(16).slice(2, 10);
+const username = localStorage.getItem('chat-username') || prompt("Pick a username:") || "User" + Math.floor(Math.random()*100);
+localStorage.setItem('chat-username', username);
 
-// Initialize the Paho MQTT Client
-const client = new Paho.MQTT.Client(BROKER, PORT, uniqueID);
+const client = new Paho.MQTT.Client(BROKER, PORT, "cid_" + Math.random().toString(16).slice(2,10));
+let onlineUsers = new Set();
 
-// 2. CONNECTION OPTIONS
-const connectOptions = {
-    useSSL: true,          // REQUIRED for GitHub Pages
-    timeout: 3,
-    onSuccess: onConnect,
-    onFailure: (err) => {
-        console.error("FAILED TO CONNECT:", err);
-        alert("Connection failed. Check the console for details.");
-    }
+// 1. Load History from LocalStorage on Startup
+const savedMessages = JSON.parse(localStorage.getItem('chat-history') || "[]");
+window.onload = () => {
+    savedMessages.forEach(msg => renderMessage(msg, false));
 };
 
-// 3. SET HANDLERS
-client.onConnectionLost = (res) => {
-    console.log("Connection lost: " + res.errorMessage);
+const connectOptions = {
+    useSSL: true,
+    onSuccess: () => {
+        client.subscribe(ROOM_TOPIC);
+        client.subscribe(STATUS_TOPIC + "#");
+        // Announce I'm online
+        const msg = new Paho.MQTT.Message("Online");
+        msg.destinationName = STATUS_TOPIC + username;
+        msg.retained = true;
+        client.send(msg);
+    },
+    willMessage: (() => {
+        let m = new Paho.MQTT.Message("Offline");
+        m.destinationName = STATUS_TOPIC + username;
+        m.retained = true;
+        return m;
+    })()
 };
 
 client.onMessageArrived = (message) => {
-    const chat = document.getElementById('chat');
-    try {
+    if (message.destinationName === ROOM_TOPIC) {
         const data = JSON.parse(message.payloadString);
-        renderMessage(data);
-    } catch (e) {
-        console.log("Non-JSON message received:", message.payloadString);
+        renderMessage(data, true);
+    } else if (message.destinationName.startsWith(STATUS_TOPIC)) {
+        const user = message.destinationName.replace(STATUS_TOPIC, "");
+        message.payloadString === "Online" ? onlineUsers.add(user) : onlineUsers.delete(user);
+        updateUserListUI();
     }
 };
 
-// 4. FUNCTIONS
-function onConnect() {
-    console.log("Connected Successfully over WSS!");
-    client.subscribe(ROOM_TOPIC);
-}
-
 function sendMessage() {
-    const input = document.getElementById('messageInput');
+    const input = document.getElementById('msgInput');
     if (!input.value.trim()) return;
 
-    const payload = JSON.stringify({
+    const data = {
         user: username,
         text: input.value,
         time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    });
+    };
 
-    const message = new Paho.MQTT.Message(payload);
-    message.destinationName = ROOM_TOPIC;
-    client.send(message);
+    const msg = new Paho.MQTT.Message(JSON.stringify(data));
+    msg.destinationName = ROOM_TOPIC;
+    client.send(msg);
     input.value = '';
 }
 
-function renderMessage(data) {
+function renderMessage(data, save) {
     const chat = document.getElementById('chat');
-    const msgDiv = document.createElement('div');
     const isMe = data.user === username;
     
-    // Inline styling for quick testing
-    msgDiv.style.cssText = `
-        padding: 8px 12px;
-        margin: 5px;
-        border-radius: 10px;
-        max-width: 70%;
-        font-family: sans-serif;
-        background: ${isMe ? '#007bff' : '#e9e9eb'};
-        color: ${isMe ? 'white' : 'black'};
-        align-self: ${isMe ? 'flex-end' : 'flex-start'};
-    `;
-    
-    msgDiv.innerHTML = `<strong>${data.user}</strong>: ${data.text}`;
-    chat.appendChild(msgDiv);
+    const div = document.createElement('div');
+    div.className = `msg ${isMe ? 'me' : 'them'}`;
+    div.innerHTML = `<span class="msg-meta">${data.user} • ${data.time}</span>${data.text}`;
+    chat.appendChild(div);
     chat.scrollTop = chat.scrollHeight;
+
+    if (save) {
+        savedMessages.push(data);
+        localStorage.setItem('chat-history', JSON.stringify(savedMessages.slice(-50))); // Save last 50
+    }
 }
 
-// 5. START CONNECTION
+function updateUserListUI() {
+    const list = document.getElementById('userList');
+    list.innerHTML = Array.from(onlineUsers).map(u => `
+        <div class="user-item"><span class="status-dot"></span>${u} ${u === username ? '(You)' : ''}</div>
+    `).join('');
+}
+
 client.connect(connectOptions);
