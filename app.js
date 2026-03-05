@@ -1,69 +1,89 @@
 // --- CONFIGURATION ---
 const BROKER = "broker.hivemq.com";
 const PORT = 8884; 
-const TOPIC = "chatbox/v12/global_room"; 
+const TOPIC = "chatbox/v13/global_room";
+const PRESENCE_TOPIC = "chatbox/v13/presence/"; // Sub-topic for tracking users
 
-// --- VALIDATION HELPER ---
-function isValidName(name) {
-    // Allows only letters (A-Z) and numbers (0-9). No spaces or symbols.
-    const regex = /^[a-zA-Z0-9]+$/;
-    return regex.test(name);
-}
+// --- IDENTITY & VALIDATION ---
+const adminPass = "101010";
+function isValidName(name) { return /^[a-zA-Z0-9]+$/.test(name); }
 
-// --- IDENTITY SETUP ---
 let user = localStorage.getItem('cb_user');
-
-// Force a valid name if the current one is empty or has illegal characters
 if (!user || !isValidName(user)) {
-    let input = prompt("Enter a username (Letters & Numbers only, NO spaces):");
-    
-    if (input && isValidName(input.trim())) {
-        user = input.trim();
-    } else {
-        // Fallback if they enter something invalid or cancel
-        user = "User" + Math.floor(Math.random() * 1000);
-    }
+    let input = prompt("Username (Letters & Numbers only, no spaces):");
+    user = (input && isValidName(input.trim())) ? input.trim() : "User" + Math.floor(Math.random() * 999);
     localStorage.setItem('cb_user', user);
 }
 
-// --- INITIALIZE MQTT CLIENT ---
-const client = new Paho.MQTT.Client(BROKER, PORT, "cb_v12_" + Math.random().toString(16).slice(2, 8));
+// --- MQTT CLIENT SETUP ---
+const client = new Paho.MQTT.Client(BROKER, PORT, "cb_" + Math.random().toString(16).slice(2, 8));
+let onlineUsers = {};
 
 function connect() {
-    console.log("Attempting to connect...");
     updateStatusUI("Connecting...", "#94a3b8");
 
     const options = {
         useSSL: true,
         timeout: 5,
         keepAliveInterval: 30,
+        // LAST WILL: Automatically tells others you're offline if you close the tab
+        willMessage: (() => {
+            let m = new Paho.MQTT.Message("Offline");
+            m.destinationName = PRESENCE_TOPIC + user;
+            m.retained = true;
+            return m;
+        })(),
         onSuccess: () => {
             updateStatusUI("Online", "#4ade80");
             client.subscribe(TOPIC);
+            client.subscribe(PRESENCE_TOPIC + "#"); // Listen to all presence updates
+
+            // Announce I am online
+            const pMsg = new Paho.MQTT.Message("Online");
+            pMsg.destinationName = PRESENCE_TOPIC + user;
+            pMsg.retained = true; 
+            client.send(pMsg);
         },
         onFailure: (err) => {
-            updateStatusUI("Offline - Retry", "#ef4444");
-            console.error("Connection Failed:", err);
-            setTimeout(connect, 5000); // Auto-retry
+            updateStatusUI("Retry", "#ef4444");
+            setTimeout(connect, 5000);
         }
     };
     client.connect(options);
 }
 
-// --- HANDLERS ---
-client.onConnectionLost = (res) => {
-    updateStatusUI("Disconnected", "#ef4444");
-    setTimeout(connect, 3000);
-};
-
+// --- MESSAGE HANDLERS ---
 client.onMessageArrived = (m) => {
+    // 1. Handle User Presence & Kicks
+    if (m.destinationName.startsWith(PRESENCE_TOPIC)) {
+        const targetUser = m.destinationName.replace(PRESENCE_TOPIC, "");
+        const status = m.payloadString;
+
+        if (status === "Online") {
+            onlineUsers[targetUser] = true;
+        } else if (status === "Offline") {
+            delete onlineUsers[targetUser];
+        } else if (status === "KICKED" && targetUser === user) {
+            alert("You have been removed from the room by an admin.");
+            location.href = "about:blank"; // Redirect kicked user
+        }
+        updateUserListUI();
+        return;
+    }
+
+    // 2. Handle Normal Chat
     try {
         const data = JSON.parse(m.payloadString);
         renderMessage(data, true);
-    } catch(e) { console.warn("Raw message received:", m.payloadString); }
+    } catch(e) {}
 };
 
-// --- CORE CHAT FUNCTIONS ---
+client.onConnectionLost = () => {
+    updateStatusUI("Offline", "#ef4444");
+    setTimeout(connect, 3000);
+};
+
+// --- CHAT LOGIC ---
 function send() {
     const input = document.getElementById('chatInput');
     if (!input || !input.value.trim()) return;
@@ -85,17 +105,16 @@ function renderMessage(data, save) {
     if (!chat) return;
 
     const isMe = data.user === user;
-    const isSystem = data.user === "System";
+    const isSystem = data.user === "System" || data.user === "Admin";
     
     const div = document.createElement('div');
     div.className = `msg ${isMe ? 'me' : 'them'}`;
     
     if(isSystem) {
-        div.style.cssText = "align-self: center; background: rgba(255,255,255,0.1); color: #94a3b8; font-size: 0.75rem; font-style: italic; border-radius: 8px;";
+        div.style.cssText = "align-self: center; background: rgba(255,255,255,0.05); color: #94a3b8; font-size: 0.75rem; border: 1px solid #334155;";
     }
     
     div.innerHTML = `<span class="msg-meta">${data.user} • ${data.time}</span>${data.text}`;
-    
     chat.appendChild(div);
     chat.scrollTop = chat.scrollHeight;
 
@@ -106,37 +125,67 @@ function renderMessage(data, save) {
     }
 }
 
-// --- UI ACTIONS ---
-function renameUser() {
-    const newName = prompt("New name (Letters & Numbers only, no spaces):", user);
-    
-    if (newName) {
-        const trimmed = newName.trim();
-        
-        if (!isValidName(trimmed)) {
-            alert("Error: Use only letters and numbers. No spaces or special characters allowed!");
-            return;
-        }
+// --- USER MANAGEMENT & ADMIN ---
+function toggleUserList() {
+    const panel = document.getElementById('userListPanel');
+    panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+}
 
-        const oldName = user;
-        user = trimmed;
-        localStorage.setItem('cb_user', user);
-        
-        // Notify the room
+function updateUserListUI() {
+    const list = document.getElementById('onlineUsers');
+    const count = document.getElementById('userCount');
+    const users = Object.keys(onlineUsers);
+    
+    count.innerText = users.length;
+    list.innerHTML = users.map(u => `
+        <div class="user-row">
+            <span class="user-name">● ${u} ${u === user ? "(You)" : ""}</span>
+            ${u !== user ? `<button class="btn-kick" onclick="kickUser('${u}')">KICK</button>` : ""}
+        </div>
+    `).join('');
+}
+
+function kickUser(target) {
+    const pass = prompt(`Enter Password to kick ${target}:`);
+    if (pass === adminPass) {
+        // Send the kick signal
+        const kMsg = new Paho.MQTT.Message("KICKED");
+        kMsg.destinationName = PRESENCE_TOPIC + target;
+        kMsg.retained = false;
+        client.send(kMsg);
+
+        // Notify the chat
         const sysMsg = new Paho.MQTT.Message(JSON.stringify({
-            user: "System",
-            text: `${oldName} changed name to ${user}`,
+            user: "Admin",
+            text: `${target} was kicked out.`,
             time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
         }));
         sysMsg.destinationName = TOPIC;
         client.send(sysMsg);
-        
+    } else if (pass !== null) {
+        alert("Wrong Password!");
+    }
+}
+
+function renameUser() {
+    const newName = prompt("New name (Alphanumeric only):", user);
+    if (newName && isValidName(newName.trim()) && newName.trim() !== user) {
+        // Clear old presence before renaming
+        const offMsg = new Paho.MQTT.Message("Offline");
+        offMsg.destinationName = PRESENCE_TOPIC + user;
+        offMsg.retained = true;
+        client.send(offMsg);
+
+        user = newName.trim();
+        localStorage.setItem('cb_user', user);
         location.reload();
+    } else if (newName) {
+        alert("Invalid name! Use only letters and numbers with no spaces.");
     }
 }
 
 function clearChat() {
-    if(confirm("Clear all chat history on this device?")) {
+    if(confirm("Clear local chat?")) {
         localStorage.removeItem('cb_history');
         location.reload();
     }
