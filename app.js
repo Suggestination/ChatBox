@@ -1,31 +1,36 @@
 const BROKER = "broker.hivemq.com";
 const PORT = 8884; 
-const ROOM_TOPIC = "gemini/chat/v6/main";
-const STATUS_TOPIC = "gemini/chat/v6/status/";
+const ROOM_TOPIC = "chatbox/v1/global_room"; // Unique topic for ChatBox
+const STATUS_TOPIC = "chatbox/v1/status/";
 
-const username = localStorage.getItem('chat-username') || prompt("Pick a username:") || "User" + Math.floor(Math.random()*100);
-localStorage.setItem('chat-username', username);
+// Use persistent name or prompt
+let username = localStorage.getItem('chatbox_name');
+if (!username) {
+    username = prompt("Welcome to ChatBox! Enter your name:") || "Guest" + Math.floor(Math.random()*100);
+    localStorage.setItem('chatbox_name', username);
+}
 
-const client = new Paho.MQTT.Client(BROKER, PORT, "cid_" + Math.random().toString(16).slice(2,10));
+const client = new Paho.MQTT.Client(BROKER, PORT, "cb_id_" + Math.random().toString(16).slice(2,10));
 let onlineUsers = new Set();
 
-// 1. Load History from LocalStorage on Startup
-const savedMessages = JSON.parse(localStorage.getItem('chat-history') || "[]");
-window.onload = () => {
-    savedMessages.forEach(msg => renderMessage(msg, false));
-};
+// Load history
+let savedMessages = JSON.parse(localStorage.getItem('chatbox_history') || "[]");
 
 const connectOptions = {
     useSSL: true,
+    timeout: 3,
     onSuccess: () => {
         client.subscribe(ROOM_TOPIC);
         client.subscribe(STATUS_TOPIC + "#");
-        // Announce I'm online
+        
+        // Announce presence
         const msg = new Paho.MQTT.Message("Online");
         msg.destinationName = STATUS_TOPIC + username;
         msg.retained = true;
         client.send(msg);
+        console.log("ChatBox Connected!");
     },
+    onFailure: (e) => console.error("ChatBox connection failed", e),
     willMessage: (() => {
         let m = new Paho.MQTT.Message("Offline");
         m.destinationName = STATUS_TOPIC + username;
@@ -36,8 +41,10 @@ const connectOptions = {
 
 client.onMessageArrived = (message) => {
     if (message.destinationName === ROOM_TOPIC) {
-        const data = JSON.parse(message.payloadString);
-        renderMessage(data, true);
+        try {
+            const data = JSON.parse(message.payloadString);
+            renderMessage(data, true);
+        } catch(e) { console.error("Data error", e); }
     } else if (message.destinationName.startsWith(STATUS_TOPIC)) {
         const user = message.destinationName.replace(STATUS_TOPIC, "");
         message.payloadString === "Online" ? onlineUsers.add(user) : onlineUsers.delete(user);
@@ -46,8 +53,9 @@ client.onMessageArrived = (message) => {
 };
 
 function sendMessage() {
+    // FIX: IDs now match index.html exactly
     const input = document.getElementById('msgInput');
-    if (!input.value.trim()) return;
+    if (!input || !input.value.trim()) return;
 
     const data = {
         user: username,
@@ -63,25 +71,39 @@ function sendMessage() {
 
 function renderMessage(data, save) {
     const chat = document.getElementById('chat');
-    const isMe = data.user === username;
+    if (!chat) return;
     
+    const isMe = data.user === username;
     const div = document.createElement('div');
     div.className = `msg ${isMe ? 'me' : 'them'}`;
     div.innerHTML = `<span class="msg-meta">${data.user} • ${data.time}</span>${data.text}`;
+    
     chat.appendChild(div);
     chat.scrollTop = chat.scrollHeight;
 
     if (save) {
         savedMessages.push(data);
-        localStorage.setItem('chat-history', JSON.stringify(savedMessages.slice(-50))); // Save last 50
+        localStorage.setItem('chatbox_history', JSON.stringify(savedMessages.slice(-50)));
     }
 }
 
 function updateUserListUI() {
     const list = document.getElementById('userList');
+    if (!list) return;
     list.innerHTML = Array.from(onlineUsers).map(u => `
-        <div class="user-item"><span class="status-dot"></span>${u} ${u === username ? '(You)' : ''}</div>
+        <div class="user-item"><span class="status-dot"></span>${u}</div>
     `).join('');
 }
 
+function clearHistory() {
+    if(confirm("Clear all chat history from this device?")) {
+        localStorage.removeItem('chatbox_history');
+        location.reload();
+    }
+}
+
+// Initial Render of saved history
+savedMessages.forEach(m => renderMessage(m, false));
+
+// Connect
 client.connect(connectOptions);
