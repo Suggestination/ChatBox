@@ -1,12 +1,17 @@
 // Configuration
 const BROKER = "broker.hivemq.com";
-const PORT = 8000;
+const PORT = 8884;
 const ROOM_TOPIC = "gemini/chat/main/room1";
 const STATUS_TOPIC = "gemini/chat/status/"; 
 
 // Get User Identity
 const username = prompt("What is your name?") || "User_" + Math.floor(Math.random() * 1000);
-const client = new Paho.MQTT.Client(BROKER, PORT, "js_client_" + username + "_" + Math.random().toString(16).slice(2, 5));
+//const client = new Paho.MQTT.Client(BROKER, PORT, "js_client_" + username + "_" + Math.random().toString(16).slice(2, 5));
+
+// Change this line in your app.js
+// This creates a unique ID based on the username AND a random timestamp
+const uniqueID = "web_chat_" + username + "_" + Math.random().toString(36).substring(2, 9);
+const client = new Paho.MQTT.Client(BROKER, PORT, uniqueID);
 
 // Local state for online users
 let onlineUsers = new Set();
