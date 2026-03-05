@@ -3,19 +3,36 @@ const BROKER = "broker.hivemq.com";
 const PORT = 8884; 
 const TOPIC = "chatbox/v12/global_room"; 
 
-// --- IDENTITY ---
-let user = localStorage.getItem('cb_user') || prompt("Enter your name:") || "User" + Math.floor(Math.random()*100);
-localStorage.setItem('cb_user', user);
+// --- VALIDATION HELPER ---
+function isValidName(name) {
+    // Allows only letters (A-Z) and numbers (0-9). No spaces or symbols.
+    const regex = /^[a-zA-Z0-9]+$/;
+    return regex.test(name);
+}
 
-// --- INITIALIZE CLIENT ---
+// --- IDENTITY SETUP ---
+let user = localStorage.getItem('cb_user');
+
+// Force a valid name if the current one is empty or has illegal characters
+if (!user || !isValidName(user)) {
+    let input = prompt("Enter a username (Letters & Numbers only, NO spaces):");
+    
+    if (input && isValidName(input.trim())) {
+        user = input.trim();
+    } else {
+        // Fallback if they enter something invalid or cancel
+        user = "User" + Math.floor(Math.random() * 1000);
+    }
+    localStorage.setItem('cb_user', user);
+}
+
+// --- INITIALIZE MQTT CLIENT ---
 const client = new Paho.MQTT.Client(BROKER, PORT, "cb_v12_" + Math.random().toString(16).slice(2, 8));
 
-// --- CONNECTION LOGIC ---
 function connect() {
     console.log("Attempting to connect...");
     updateStatusUI("Connecting...", "#94a3b8");
 
-    // Only use properties supported by Paho 1.0.1
     const options = {
         useSSL: true,
         timeout: 5,
@@ -27,8 +44,7 @@ function connect() {
         onFailure: (err) => {
             updateStatusUI("Offline - Retry", "#ef4444");
             console.error("Connection Failed:", err);
-            // Auto-retry after 5 seconds
-            setTimeout(connect, 5000);
+            setTimeout(connect, 5000); // Auto-retry
         }
     };
     client.connect(options);
@@ -37,7 +53,6 @@ function connect() {
 // --- HANDLERS ---
 client.onConnectionLost = (res) => {
     updateStatusUI("Disconnected", "#ef4444");
-    console.log("Lost connection, retrying in 3s...");
     setTimeout(connect, 3000);
 };
 
@@ -45,10 +60,10 @@ client.onMessageArrived = (m) => {
     try {
         const data = JSON.parse(m.payloadString);
         renderMessage(data, true);
-    } catch(e) { console.warn("Received non-JSON:", m.payloadString); }
+    } catch(e) { console.warn("Raw message received:", m.payloadString); }
 };
 
-// --- CORE FUNCTIONS ---
+// --- CORE CHAT FUNCTIONS ---
 function send() {
     const input = document.getElementById('chatInput');
     if (!input || !input.value.trim()) return;
@@ -74,7 +89,10 @@ function renderMessage(data, save) {
     
     const div = document.createElement('div');
     div.className = `msg ${isMe ? 'me' : 'them'}`;
-    if(isSystem) div.style.cssText = "align-self: center; background: none; color: #94a3b8; font-size: 0.75rem; font-style: italic;";
+    
+    if(isSystem) {
+        div.style.cssText = "align-self: center; background: rgba(255,255,255,0.1); color: #94a3b8; font-size: 0.75rem; font-style: italic; border-radius: 8px;";
+    }
     
     div.innerHTML = `<span class="msg-meta">${data.user} • ${data.time}</span>${data.text}`;
     
@@ -88,15 +106,23 @@ function renderMessage(data, save) {
     }
 }
 
-// --- UI FEATURES ---
+// --- UI ACTIONS ---
 function renameUser() {
-    const newName = prompt("New display name:", user);
-    if (newName && newName.trim() !== "" && newName !== user) {
+    const newName = prompt("New name (Letters & Numbers only, no spaces):", user);
+    
+    if (newName) {
+        const trimmed = newName.trim();
+        
+        if (!isValidName(trimmed)) {
+            alert("Error: Use only letters and numbers. No spaces or special characters allowed!");
+            return;
+        }
+
         const oldName = user;
-        user = newName.trim();
+        user = trimmed;
         localStorage.setItem('cb_user', user);
         
-        // Announce rename to others
+        // Notify the room
         const sysMsg = new Paho.MQTT.Message(JSON.stringify({
             user: "System",
             text: `${oldName} changed name to ${user}`,
@@ -110,7 +136,7 @@ function renameUser() {
 }
 
 function clearChat() {
-    if(confirm("Clear local chat history?")) {
+    if(confirm("Clear all chat history on this device?")) {
         localStorage.removeItem('cb_history');
         location.reload();
     }
@@ -123,14 +149,10 @@ function updateStatusUI(text, color) {
 
 // --- BOOTUP ---
 window.onload = () => {
-    // 1. Load history
     const history = JSON.parse(localStorage.getItem('cb_history') || "[]");
     history.forEach(m => renderMessage(m, false));
-    
-    // 2. Start connection
     connect();
 
-    // 3. Listen for Enter
     document.getElementById('chatInput').addEventListener('keypress', (e) => {
         if(e.key === 'Enter') send();
     });
