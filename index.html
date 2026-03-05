@@ -11,20 +11,17 @@
         body { font-family: system-ui, sans-serif; margin: 0; background: var(--bg); color: var(--text); height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
         
         #header { padding: 12px 20px; background: rgba(30, 41, 59, 0.8); backdrop-filter: blur(12px); border-bottom: 1px solid #334155; display: flex; justify-content: space-between; align-items: center; }
-        #status-pill { font-size: 0.7rem; padding: 4px 12px; border-radius: 20px; background: #334155; font-weight: bold; transition: 0.3s; cursor: pointer; }
+        #status-pill { font-size: 0.7rem; padding: 4px 12px; border-radius: 20px; background: #334155; font-weight: bold; cursor: pointer; color: #94a3b8; }
         
         #chat { flex: 1; overflow-y: auto; padding: 15px; display: flex; flex-direction: column; gap: 10px; background: radial-gradient(circle at center, #1e1b4b 0%, #0f172a 100%); }
-        .msg { padding: 10px 14px; border-radius: 18px; max-width: 85%; font-size: 0.95rem; line-height: 1.4; animation: pop 0.2s ease-out; }
-        @keyframes pop { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
-        
+        .msg { padding: 10px 14px; border-radius: 18px; max-width: 85%; font-size: 0.95rem; line-height: 1.4; }
         .msg.me { align-self: flex-end; background: linear-gradient(135deg, #8b5cf6, #6366f1); border-bottom-right-radius: 4px; }
         .msg.them { align-self: flex-start; background: #334155; border-bottom-left-radius: 4px; }
         .msg-meta { font-size: 0.65rem; opacity: 0.6; margin-bottom: 4px; display: block; font-weight: bold; }
 
         .input-box { padding: 15px; background: #1e293b; display: flex; gap: 8px; border-top: 1px solid #334155; padding-bottom: calc(15px + env(safe-area-inset-bottom)); }
         #chatInput { flex: 1; background: #0f172a; border: 1px solid #475569; border-radius: 24px; padding: 12px 20px; color: white; outline: none; font-size: 1rem; }
-        #sendBtn { background: var(--primary); border: none; width: 44px; height: 44px; border-radius: 50%; color: white; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; transition: transform 0.1s; }
-        #sendBtn:active { transform: scale(0.9); }
+        #sendBtn { background: var(--primary); border: none; width: 44px; height: 44px; border-radius: 50%; color: white; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
         
         .btn-small { background: none; border: 1px solid #475569; color: #94a3b8; font-size: 0.7rem; padding: 5px 10px; border-radius: 6px; cursor: pointer; }
     </style>
@@ -35,7 +32,7 @@
     <h2 style="margin:0; font-size: 1.1rem; letter-spacing: 1px;">CHATBOX</h2>
     <div style="display:flex; gap: 8px; align-items:center;">
         <button class="btn-small" onclick="clearLocalChat()">Clear Chat</button>
-        <div id="status-pill" onclick="manualReconnect()">Connecting...</div>
+        <div id="status-pill" onclick="startMQTT()">Connecting...</div>
     </div>
 </div>
 
@@ -43,10 +40,8 @@
 
 <div class="input-box">
     <input type="text" id="chatInput" placeholder="Type a message..." autocomplete="off">
-    <button id="sendBtn">➤</button>
+    <button id="sendBtn" onclick="sendMessage()">➤</button>
 </div>
-
-<audio id="notifSound" src="https://assets.mixkit.co/active_storage/sfx/2354/2354-preview.mp3" preload="auto"></audio>
 
 <script src="app.js"></script>
 </body>
