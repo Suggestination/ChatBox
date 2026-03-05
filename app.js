@@ -1,82 +1,70 @@
-// CONFIGURATION
+// 1. AUTO-CONFIG: Detects if your site is HTTPS or HTTP
+const isSecure = window.location.protocol === "https:";
 const BROKER = "broker.hivemq.com";
-const PORT = 8000; // Use 8884 if you switch useSSL to true
-const ROOM_TOPIC = "gemini/chat/main/unique_room_123"; // Change this to something unique
-const STATUS_TOPIC = "gemini/chat/status/"; 
+// HiveMQ uses 8000 for WS and 8884 or 443 for WSS
+const PORT = isSecure ? 8884 : 8000; 
 
-// 1. ENSURE UNIQUE CLIENT ID (Prevents one tab from kicking the other out)
+const ROOM_TOPIC = "gemini/chat/unique_v3_room"; // Change this if you want a private room
+const STATUS_TOPIC = "gemini/chat/status/";
+
+// 2. IDENTITY: Force a truly unique ID so tabs don't kick each other off
 const username = prompt("What is your name?") || "User_" + Math.floor(Math.random() * 100);
-const uniqueID = "client_" + username + "_" + Math.random().toString(16).slice(2, 10);
+const uniqueID = "client_" + Math.random().toString(16).substr(2, 8);
 
 const client = new Paho.MQTT.Client(BROKER, PORT, uniqueID);
 
-let onlineUsers = new Set();
-
-// 2. CONNECTION OPTIONS
+// 3. CONNECTION LOGIC
 const connectOptions = {
     onSuccess: onConnect,
-    onFailure: (err) => console.error("Connect Failed:", err),
-    useSSL: false, // Set to true if your GitHub page is HTTPS and broker supports it
+    onFailure: (err) => {
+        console.error("CONNECTION FAILED:", err);
+        alert("Connection failed! Check console (F12) for details.");
+    },
+    useSSL: isSecure, // Matches the protocol of your website
     keepAliveInterval: 30,
-    cleanSession: true, // Ensures a fresh start for each tab
-    willMessage: (() => {
-        let msg = new Paho.MQTT.Message("Offline");
-        msg.destinationName = STATUS_TOPIC + username;
-        msg.retained = true;
-        return msg;
-    })()
+    timeout: 10,
+    cleanSession: true
 };
 
-// 3. CALLBACKS
 client.onConnectionLost = (res) => {
-    console.log("Connection Lost. Error: " + res.errorMessage);
+    console.log("Connection Lost: " + res.errorMessage);
 };
 
 client.onMessageArrived = (message) => {
-    const topic = message.destinationName;
-    const payload = message.payloadString;
-
-    if (topic === ROOM_TOPIC) {
-        try {
-            const data = JSON.parse(payload);
-            renderMessage(data);
-        } catch (e) {
-            console.error("Error parsing JSON:", e);
-        }
-    } 
-    else if (topic.startsWith(STATUS_TOPIC)) {
-        const user = topic.replace(STATUS_TOPIC, "");
-        if (payload === "Online") {
-            onlineUsers.add(user);
-        } else {
-            onlineUsers.delete(user);
-        }
-        updateUserListUI();
+    const chat = document.getElementById('chat');
+    try {
+        const data = JSON.parse(message.payloadString);
+        const isMe = data.user === username;
+        
+        const msgDiv = document.createElement('div');
+        msgDiv.style.padding = "10px";
+        msgDiv.style.margin = "5px";
+        msgDiv.style.borderRadius = "8px";
+        msgDiv.style.maxWidth = "70%";
+        msgDiv.style.alignSelf = isMe ? "flex-end" : "flex-start";
+        msgDiv.style.backgroundColor = isMe ? "#007bff" : "#e9e9eb";
+        msgDiv.style.color = isMe ? "white" : "black";
+        
+        msgDiv.innerHTML = `<strong>${data.user}</strong>: ${data.text}`;
+        chat.appendChild(msgDiv);
+        chat.scrollTop = chat.scrollHeight;
+    } catch (e) {
+        console.log("Received non-JSON message: ", message.payloadString);
     }
 };
 
 function onConnect() {
-    console.log("Connected successfully as: " + username);
-    
-    // Subscribe to both the chat and the status updates
+    console.log("CONNECTED TO BROKER ON PORT: " + PORT);
     client.subscribe(ROOM_TOPIC);
-    client.subscribe(STATUS_TOPIC + "#");
-
-    // Announce presence
-    const msg = new Paho.MQTT.Message("Online");
-    msg.destinationName = STATUS_TOPIC + username;
-    msg.retained = true;
-    client.send(msg);
 }
 
 function sendMessage() {
     const input = document.getElementById('messageInput');
-    if (!input || !input.value.trim()) return;
+    if (!input.value.trim()) return;
 
     const payload = JSON.stringify({
         user: username,
-        text: input.value,
-        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        text: input.value
     });
 
     const message = new Paho.MQTT.Message(payload);
@@ -85,37 +73,6 @@ function sendMessage() {
     input.value = '';
 }
 
-function renderMessage(data) {
-    const chat = document.getElementById('chat');
-    const msgDiv = document.createElement('div');
-    const isMe = data.user === username;
-    
-    msgDiv.style.cssText = `
-        padding: 10px; 
-        margin: 5px; 
-        border-radius: 10px; 
-        background: ${isMe ? '#007bff' : '#eee'}; 
-        color: ${isMe ? 'white' : 'black'};
-        align-self: ${isMe ? 'flex-end' : 'flex-start'};
-        max-width: 80%;
-    `;
-    
-    msgDiv.innerHTML = `<strong>${data.user}</strong>: ${data.text}`;
-    chat.appendChild(msgDiv);
-    chat.scrollTop = chat.scrollHeight;
-}
-
-function updateUserListUI() {
-    const list = document.getElementById('userList');
-    if(list) {
-        list.innerHTML = "";
-        onlineUsers.forEach(user => {
-            const li = document.createElement('li');
-            li.textContent = user + (user === username ? " (You)" : "");
-            list.appendChild(li);
-        });
-    }
-}
-
-// Start Connection
+// Start the connection
+console.log(`Attempting to connect to ${BROKER} on port ${PORT}...`);
 client.connect(connectOptions);
