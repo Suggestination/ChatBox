@@ -1,26 +1,24 @@
-// Configuration
+// CONFIGURATION
 const BROKER = "broker.hivemq.com";
-const PORT = 8884;
-const ROOM_TOPIC = "gemini/chat/main/room1";
+const PORT = 8000; // Use 8884 if you switch useSSL to true
+const ROOM_TOPIC = "gemini/chat/main/unique_room_123"; // Change this to something unique
 const STATUS_TOPIC = "gemini/chat/status/"; 
 
-// Get User Identity
-const username = prompt("What is your name?") || "User_" + Math.floor(Math.random() * 1000);
-//const client = new Paho.MQTT.Client(BROKER, PORT, "js_client_" + username + "_" + Math.random().toString(16).slice(2, 5));
+// 1. ENSURE UNIQUE CLIENT ID (Prevents one tab from kicking the other out)
+const username = prompt("What is your name?") || "User_" + Math.floor(Math.random() * 100);
+const uniqueID = "client_" + username + "_" + Math.random().toString(16).slice(2, 10);
 
-// Change this line in your app.js
-// This creates a unique ID based on the username AND a random timestamp
-const uniqueID = "web_chat_" + username + "_" + Math.random().toString(36).substring(2, 9);
 const client = new Paho.MQTT.Client(BROKER, PORT, uniqueID);
 
-// Local state for online users
 let onlineUsers = new Set();
 
+// 2. CONNECTION OPTIONS
 const connectOptions = {
     onSuccess: onConnect,
-    useSSL: false,
+    onFailure: (err) => console.error("Connect Failed:", err),
+    useSSL: false, // Set to true if your GitHub page is HTTPS and broker supports it
     keepAliveInterval: 30,
-    // LAST WILL: Tells everyone you left if you close the tab/crash
+    cleanSession: true, // Ensures a fresh start for each tab
     willMessage: (() => {
         let msg = new Paho.MQTT.Message("Offline");
         msg.destinationName = STATUS_TOPIC + username;
@@ -29,19 +27,23 @@ const connectOptions = {
     })()
 };
 
-client.onConnectionLost = (res) => { console.log("Lost connection: " + res.errorMessage); };
+// 3. CALLBACKS
+client.onConnectionLost = (res) => {
+    console.log("Connection Lost. Error: " + res.errorMessage);
+};
 
 client.onMessageArrived = (message) => {
     const topic = message.destinationName;
     const payload = message.payloadString;
 
-    // 1. Handle Chat Messages
     if (topic === ROOM_TOPIC) {
-        const data = JSON.parse(payload);
-        renderMessage(data);
+        try {
+            const data = JSON.parse(payload);
+            renderMessage(data);
+        } catch (e) {
+            console.error("Error parsing JSON:", e);
+        }
     } 
-    
-    // 2. Handle Online/Offline Status
     else if (topic.startsWith(STATUS_TOPIC)) {
         const user = topic.replace(STATUS_TOPIC, "");
         if (payload === "Online") {
@@ -54,11 +56,13 @@ client.onMessageArrived = (message) => {
 };
 
 function onConnect() {
-    console.log("Connected as " + username);
+    console.log("Connected successfully as: " + username);
+    
+    // Subscribe to both the chat and the status updates
     client.subscribe(ROOM_TOPIC);
-    client.subscribe(STATUS_TOPIC + "#"); // Listen for all user statuses
+    client.subscribe(STATUS_TOPIC + "#");
 
-    // Announce presence (Retained so others see you immediately)
+    // Announce presence
     const msg = new Paho.MQTT.Message("Online");
     msg.destinationName = STATUS_TOPIC + username;
     msg.retained = true;
@@ -67,7 +71,7 @@ function onConnect() {
 
 function sendMessage() {
     const input = document.getElementById('messageInput');
-    if (!input.value.trim()) return;
+    if (!input || !input.value.trim()) return;
 
     const payload = JSON.stringify({
         user: username,
@@ -86,23 +90,32 @@ function renderMessage(data) {
     const msgDiv = document.createElement('div');
     const isMe = data.user === username;
     
-    msgDiv.className = `msg ${isMe ? 'me' : ''}`;
-    msgDiv.innerHTML = `
-        <small style="display:block; font-size:0.7rem; opacity:0.8">${data.user} • ${data.time}</small>
-        ${data.text}
+    msgDiv.style.cssText = `
+        padding: 10px; 
+        margin: 5px; 
+        border-radius: 10px; 
+        background: ${isMe ? '#007bff' : '#eee'}; 
+        color: ${isMe ? 'white' : 'black'};
+        align-self: ${isMe ? 'flex-end' : 'flex-start'};
+        max-width: 80%;
     `;
+    
+    msgDiv.innerHTML = `<strong>${data.user}</strong>: ${data.text}`;
     chat.appendChild(msgDiv);
     chat.scrollTop = chat.scrollHeight;
 }
 
 function updateUserListUI() {
     const list = document.getElementById('userList');
-    list.innerHTML = "";
-    onlineUsers.forEach(user => {
-        const li = document.createElement('li');
-        li.innerHTML = `<span class="online-dot"></span>${user} ${user === username ? '(You)' : ''}`;
-        list.appendChild(li);
-    });
+    if(list) {
+        list.innerHTML = "";
+        onlineUsers.forEach(user => {
+            const li = document.createElement('li');
+            li.textContent = user + (user === username ? " (You)" : "");
+            list.appendChild(li);
+        });
+    }
 }
 
+// Start Connection
 client.connect(connectOptions);
