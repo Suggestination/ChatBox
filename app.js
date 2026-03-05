@@ -1,101 +1,112 @@
+// CONFIGURATION
 const BROKER = "broker.hivemq.com";
-const PORT = 8884; 
-const TOPIC = "chatbox/global/final_v8"; 
+const PORT = 8884; // Force Secure Port
+const TOPIC = "chatbox/v9/main_channel"; 
 
-let username = localStorage.getItem('cb_user') || prompt("Enter your name:") || "User" + Math.floor(Math.random()*100);
+// IDENTITY
+let username = localStorage.getItem('cb_user') || prompt("Enter Chat Name:") || "User" + Math.floor(Math.random()*100);
 localStorage.setItem('cb_user', username);
 
-const client = new Paho.MQTT.Client(BROKER, PORT, "cb_client_" + Math.random().toString(16).slice(2, 10));
-
-// Load local history
-let history = JSON.parse(localStorage.getItem('cb_history') || "[]");
+// CLIENT INIT
+const client = new Paho.MQTT.Client(BROKER, PORT, "cb_v9_" + Math.random().toString(16).slice(2, 10));
 
 const connectOptions = {
-    useSSL: true,
-    reconnect: true, // Auto-reconnect if it drops
+    useSSL: true, 
+    timeout: 5,
+    keepAliveInterval: 30,
+    reconnect: true, // AUTO-RECONNECT
     onSuccess: () => {
-        const indicator = document.getElementById('status-indicator');
-        indicator.innerText = "Online";
-        indicator.style.color = "#4ade80";
+        updateStatus("Online", "#4ade80");
         client.subscribe(TOPIC);
     },
-    onFailure: (e) => {
-        document.getElementById('status-indicator').innerText = "Failed";
-        console.error("Connection Error:", e);
+    onFailure: (err) => {
+        updateStatus("Failed - Click to Retry", "#f87171");
+        console.error(err);
     }
 };
 
+// HANDLERS
 client.onMessageArrived = (message) => {
     try {
         const data = JSON.parse(message.payloadString);
         renderMessage(data, true);
-        
-        // Play sound if message is from someone else
-        if (data.user !== username) {
-            document.getElementById('msgSound').play().catch(() => {});
-        }
-    } catch (e) { console.log(e); }
+        if (data.user !== username) document.getElementById('notifSound').play().catch(()=>{});
+    } catch(e) {}
 };
 
-client.onConnectionLost = () => {
-    document.getElementById('status-indicator').innerText = "Connecting...";
+client.onConnectionLost = (res) => {
+    updateStatus("Connecting...", "#94a3b8");
+    if (res.errorCode !== 0) console.log("Lost: " + res.errorMessage);
 };
+
+// CORE FUNCTIONS
+function updateStatus(text, color) {
+    const pill = document.getElementById('status-pill');
+    if (pill) {
+        pill.innerText = text;
+        pill.style.color = color;
+    }
+}
 
 function sendMessage() {
     const input = document.getElementById('chatInput');
-    if (!input || !input.value.trim()) return;
+    if (!input || !input.value.trim() || pill.innerText !== "Online") return;
 
-    const payload = {
+    const msgObj = {
         user: username,
         text: input.value,
         time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     };
 
-    const message = new Paho.MQTT.Message(JSON.stringify(payload));
+    const message = new Paho.MQTT.Message(JSON.stringify(msgObj));
     message.destinationName = TOPIC;
     client.send(message);
     input.value = '';
 }
 
-function renderMessage(data, shouldSave) {
+function renderMessage(data, save) {
     const chat = document.getElementById('chat');
     if (!chat) return;
-
     const isMe = data.user === username;
     const div = document.createElement('div');
     div.className = `msg ${isMe ? 'me' : 'them'}`;
-    div.innerHTML = `<span class="msg-info">${data.user} • ${data.time}</span>${data.text}`;
-    
+    div.innerHTML = `<span class="msg-meta">${data.user} • ${data.time}</span>${data.text}`;
     chat.appendChild(div);
     chat.scrollTop = chat.scrollHeight;
 
-    if (shouldSave) {
+    if (save) {
+        let history = JSON.parse(localStorage.getItem('cb_history') || "[]");
         history.push(data);
         localStorage.setItem('cb_history', JSON.stringify(history.slice(-50)));
     }
 }
 
-function clearHistory() {
-    if (confirm("Clear history and refresh?")) {
+function clearLocalChat() {
+    if(confirm("Clear local chat history?")) {
         localStorage.removeItem('cb_history');
-        // We clear the history variable first to prevent error during reload
-        history = []; 
         location.reload();
     }
 }
 
-// Safer event attachment
+function manualReconnect() {
+    if (!client.isConnected()) {
+        updateStatus("Retrying...", "#fbbf24");
+        client.connect(connectOptions);
+    }
+}
+
+// BOOTSTRAP
 document.addEventListener('DOMContentLoaded', () => {
-    // Render initial history
+    // Load History
+    const history = JSON.parse(localStorage.getItem('cb_history') || "[]");
     history.forEach(m => renderMessage(m, false));
 
-    const sendBtn = document.getElementById('sendBtn');
-    const input = document.getElementById('chatInput');
-
-    if (sendBtn) sendBtn.addEventListener('click', sendMessage);
-    if (input) input.addEventListener('keypress', (e) => {
-        if (e.key === 'Enter') sendMessage();
+    // UI Events
+    document.getElementById('sendBtn').addEventListener('click', sendMessage);
+    document.getElementById('chatInput').addEventListener('keypress', (e) => {
+        if(e.key === 'Enter') sendMessage();
     });
-});
 
-client.connect(connectOptions);
+    // Start
+    client.connect(connectOptions);
+});
